@@ -1,7 +1,9 @@
 const fs = require('fs');
 const PDFParser = require('pdf-parse');
+const tesseract = require('tesseract.js');
+const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-require('dotenv').config()
+require('dotenv').config();
 
 // Initialize the Google Generative AI with the API key from the environment variable
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
@@ -10,6 +12,11 @@ async function extractTextFromPdf(pdfPath) {
     const dataBuffer = fs.readFileSync(pdfPath);
     const data = await PDFParser(dataBuffer);
     return data.text;
+}
+
+async function extractTextFromImage(imagePath) {
+    const { data: { text } } = await tesseract.recognize(imagePath, 'eng');
+    return text;
 }
 
 async function extractInvoiceDetails(text) {
@@ -71,18 +78,24 @@ async function extractInvoiceDetails(text) {
     }
 }
 
-async function processInvoice(pdfPath) {
+async function processInvoice(filePath) {
+    const fileExtension = path.extname(filePath).toLowerCase();
     try {
-        const text = await extractTextFromPdf(pdfPath);
+        let text;
+        if (fileExtension === '.pdf') {
+            text = await extractTextFromPdf(filePath);
+        } else if (['.png', '.jpg', '.jpeg'].includes(fileExtension)) {
+            text = await extractTextFromImage(filePath);
+        } else {
+            throw new Error('Unsupported file type');
+        }
+
         const details = await extractInvoiceDetails(text);
         return details;
     } catch (error) {
-        console.log('API Response:', response);
-        console.log('Response type:', typeof response);
-        console.log('Response methods:', Object.keys(response));
         return {
             error: `Failed to process invoice: ${error.message}`,
-            pdf_path: pdfPath
+            file_path: filePath
         };
     }
 }
