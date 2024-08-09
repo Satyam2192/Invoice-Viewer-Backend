@@ -1,9 +1,10 @@
 const fs = require('fs');
 const PDFParser = require('pdf-parse');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+require('dotenv').config()
 
 // Initialize the Google Generative AI with the API key from the environment variable
-const genAI = new GoogleGenerativeAI("AIzaSyBbH70pFW7ASvVmstAV4xcxlYN8cRW5HIk");
+const genAI = new GoogleGenerativeAI(process.env.API_KEY);
 
 async function extractTextFromPdf(pdfPath) {
     const dataBuffer = fs.readFileSync(pdfPath);
