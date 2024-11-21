@@ -29,6 +29,67 @@ async function extractTextFromImage(imagePath) {
     }
 }
 
+async function extractDataFromExcel(filePath) {
+    try {
+        const workbook = XLSX.readFile(filePath); 
+        const sheetNames = workbook.SheetNames; 
+        const sheet = workbook.Sheets[sheetNames[0]]; 
+        const jsonData = XLSX.utils.sheet_to_json(sheet); 
+
+        const invoices = [];
+        const products = [];
+        const customers = new Map(); 
+
+        jsonData.forEach(row => {
+            const invoice = {
+                serialNumber: row['Serial Number'] || 'N/A',
+                customerName: row['Customer Name'] || 'N/A',
+                productName: row['Product Name'] || 'N/A',
+                quantity: row['Quantity'] || 0,
+                tax: row['Tax'] || 0,
+                totalAmount: row['Total Amount'] || 0,
+                date: row['Date'] || 'N/A'
+            };
+            invoices.push(invoice);
+
+            const product = {
+                name: row['Product Name'] || 'N/A',
+                quantity: row['Quantity'] || 0,
+                unitPrice: row['Unit Price'] || 0,
+                tax: row['Tax'] || 0,
+                priceWithTax: row['Price with Tax'] || 0,
+                discount: row['Discount'] || 'N/A'
+            };
+            products.push(product);
+
+            // Aggregate customer data
+            const customerName = row['Customer Name'] || 'N/A';
+            const totalPurchaseAmount = row['Total Amount'] || 0;
+            if (customers.has(customerName)) {
+                customers.set(customerName, customers.get(customerName) + totalPurchaseAmount);
+            } else {
+                customers.set(customerName, totalPurchaseAmount);
+            }
+        });
+
+        const customerArray = Array.from(customers.entries()).map(([name, totalPurchaseAmount]) => ({
+            name,
+            phoneNumber: 'N/A', 
+            totalPurchaseAmount
+        }));
+
+        return {
+            invoices,
+            products,
+            customers: customerArray
+        };
+    } catch (error) {
+        console.error('Excel data extraction error:', error);
+        throw new Error('Failed to extract data from Excel file.');
+    }
+}
+
+
 async function extractInvoiceDetails(text) {
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
@@ -68,13 +129,11 @@ async function extractInvoiceDetails(text) {
         const response = await result.response;
         let textResponse = response.text();
         
-        // Remove markdown formatting
         textResponse = textResponse.replace(/```json\n?|\n?```/g, '').trim();
         
         try {
             const parsedData = JSON.parse(textResponse);
             
-            // Validate and clean the parsed data
             const cleanedData = {
                 customer_details: {
                     name: parsedData.customer_details?.name || 'N/A',
@@ -150,7 +209,6 @@ async function processInvoice(filePath) {
             throw new Error('Unsupported file type');
         }
 
-        // Additional validation
         if (extractedData.error) {
             throw new Error(extractedData.error);
         }
