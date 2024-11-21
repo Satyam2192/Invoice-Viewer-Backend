@@ -3,51 +3,63 @@ const PDFParser = require('pdf-parse');
 const tesseract = require('tesseract.js');
 const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const XLSX = require('xlsx');
 require('dotenv').config();
 
-// Initialize the Google Generative AI with the API key from the environment variable
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
 
 async function extractTextFromPdf(pdfPath) {
-    const dataBuffer = fs.readFileSync(pdfPath);
-    const data = await PDFParser(dataBuffer);
-    return data.text;
+    try {
+        const dataBuffer = fs.readFileSync(pdfPath);
+        const data = await PDFParser(dataBuffer);
+        return data.text || '';
+    } catch (error) {
+        console.error('PDF parsing error:', error);
+        return '';
+    }
 }
 
 async function extractTextFromImage(imagePath) {
-    const { data: { text } } = await tesseract.recognize(imagePath, 'eng');
-    return text;
+    try {
+        const { data: { text } } = await tesseract.recognize(imagePath, 'eng');
+        return text || '';
+    } catch (error) {
+        console.error('Image text extraction error:', error);
+        return '';
+    }
 }
 
 async function extractInvoiceDetails(text) {
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
     const prompt = `
-    Extract the following details from the invoice text:
-    - Customer details
-    - Products
-    - Total Amount
+    Comprehensively Extract Invoice Details:
+    - Strictly follow this JSON structure
+    - If any field is not found, use 'N/A' or 0
+    - Analyze the text carefully and extract maximum possible details
 
-    Format the output as a JSON object with the following structure:
+    Required JSON Structure:
     {
         "customer_details": {
-            "name": "...",
-            "address": "..."
+            "name": "Customer Full Name",
+            "address": "Complete Address",
+            "phone": "Phone Number (if available)"
         },
         "products": [
             {
-                "description": "...",
-                "quantity": ...,
-                "total": ...
-            },
-            ...
+                "description": "Product Name/Description",
+                "quantity": number,
+                "unit_price": number,
+                "total": number
+            }
         ],
-        "total_amount": "..."
+        "total_amount": number,
+        "tax_amount": number,
+        "invoice_date": "Date of Invoice",
+        "invoice_number": "Invoice Serial Number"
     }
 
-    Important: Provide only the JSON object without any additional formatting or markdown.
-
-    Invoice text:
+    Here's the invoice text to extract details from:
     ${text}
     `;
 
@@ -56,46 +68,103 @@ async function extractInvoiceDetails(text) {
         const response = await result.response;
         let textResponse = response.text();
         
-        // Remove any markdown formatting
+        // Remove markdown formatting
         textResponse = textResponse.replace(/```json\n?|\n?```/g, '').trim();
         
-        // Parse the cleaned text response as JSON
         try {
-            return JSON.parse(textResponse);
+            const parsedData = JSON.parse(textResponse);
+            
+            // Validate and clean the parsed data
+            const cleanedData = {
+                customer_details: {
+                    name: parsedData.customer_details?.name || 'N/A',
+                    address: parsedData.customer_details?.address || 'N/A',
+                    phone: parsedData.customer_details?.phone || 'N/A'
+                },
+                products: (parsedData.products || []).map(product => ({
+                    description: product.description || 'N/A',
+                    quantity: Number(product.quantity) || 0,
+                    unit_price: Number(product.unit_price) || 0,
+                    total: Number(product.total) || 0
+                })),
+                total_amount: Number(parsedData.total_amount) || 0,
+                tax_amount: Number(parsedData.tax_amount) || 0,
+                invoice_date: parsedData.invoice_date || 'N/A',
+                invoice_number: parsedData.invoice_number || 'N/A'
+            };
+
+            return {
+                invoices: [{
+                    serialNumber: cleanedData.invoice_number,
+                    customerName: cleanedData.customer_details.name,
+                    productName: cleanedData.products[0]?.description || 'N/A',
+                    quantity: cleanedData.products[0]?.quantity || 0,
+                    tax: cleanedData.tax_amount,
+                    totalAmount: cleanedData.total_amount,
+                    date: cleanedData.invoice_date
+                }],
+                products: cleanedData.products.map(product => ({
+                    name: product.description,
+                    quantity: product.quantity,
+                    unitPrice: product.unit_price,
+                    tax: cleanedData.tax_amount,
+                    priceWithTax: product.total,
+                    discount: 'N/A'
+                })),
+                customers: [{
+                    name: cleanedData.customer_details.name,
+                    phoneNumber: cleanedData.customer_details.phone,
+                    totalPurchaseAmount: cleanedData.total_amount
+                }]
+            };
         } catch (parseError) {
             console.error('Error parsing JSON response:', parseError);
             return {
-                error: 'Failed to parse JSON response from Gemini API.',
+                error: 'Failed to parse detailed invoice information.',
                 raw_response: textResponse
             };
         }
     } catch (error) {
         console.error('Error generating content from Gemini API:', error);
         return {
-            error: 'Failed to extract invoice details using Gemini API.',
+            error: 'Advanced AI extraction failed. Please check the file quality.',
             raw_response: error.message
         };
     }
 }
 
 async function processInvoice(filePath) {
-    const fileExtension = path.extname(filePath).toLowerCase();
+    const ext = path.extname(filePath).toLowerCase();
+    let extractedData;
+
     try {
-        let text;
-        if (fileExtension === '.pdf') {
-            text = await extractTextFromPdf(filePath);
-        } else if (['.png', '.jpg', '.jpeg'].includes(fileExtension)) {
-            text = await extractTextFromImage(filePath);
+        if (ext === '.pdf') {
+            const text = await extractTextFromPdf(filePath);
+            extractedData = await extractInvoiceDetails(text);
+        } else if (ext === '.jpg' || ext === '.png') {
+            const text = await extractTextFromImage(filePath);
+            extractedData = await extractInvoiceDetails(text);
+        } else if (ext === '.xlsx' || ext === '.xls') {
+            extractedData = await extractDataFromExcel(filePath);
         } else {
             throw new Error('Unsupported file type');
         }
 
-        const details = await extractInvoiceDetails(text);
-        return details;
-    } catch (error) {
+        // Additional validation
+        if (extractedData.error) {
+            throw new Error(extractedData.error);
+        }
+
+        return extractedData;
+    } catch (err) {
+        console.error('Invoice Processing Error:', err);
         return {
-            error: `Failed to process invoice: ${error.message}`,
-            file_path: filePath
+            error: `Invoice Processing Failed: ${err.message}. 
+            Possible reasons:
+            - Unclear or low-quality document
+            - Unsupported document format
+            - Extraction limitations`,
+            details: err.toString()
         };
     }
 }

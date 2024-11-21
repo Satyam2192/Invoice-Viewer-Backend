@@ -8,7 +8,11 @@ const { processInvoice } = require('./invoiceProcessor');
 const app = express();
 const UPLOAD_FOLDER = path.join(__dirname, 'uploads');
 
-app.use(cors());
+app.use(cors({
+    origin: ['http://localhost:3000', 'http://localhost:5173', 'https://your-production-backend.com'], 
+    methods: ['POST', 'GET', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+  }));
 app.use(fileUpload());
 app.use(express.json());
 
@@ -40,6 +44,7 @@ app.post('/process-invoice', async (req, res) => {
         res.status(500).json({ error: `Failed to process invoice: ${err.message}` });
     }
 });
+
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
