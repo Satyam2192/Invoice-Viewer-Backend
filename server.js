@@ -9,7 +9,7 @@ const app = express();
 const UPLOAD_FOLDER = path.join(__dirname, 'uploads');
 
 app.use(cors({
-    origin: ['http://localhost:3000', 'http://localhost:5173', 'https://your-production-backend.com'], 
+    origin: ['http://localhost:3000', 'http://localhost:5173', 'https://invoice-viewer-backend-2.onrender.com'], 
     methods: ['POST', 'GET', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
   }));
