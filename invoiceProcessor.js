@@ -31,63 +31,87 @@ async function extractTextFromImage(imagePath) {
 
 async function extractDataFromExcel(filePath) {
     try {
-        const workbook = XLSX.readFile(filePath); 
-        const sheetNames = workbook.SheetNames; 
-        const sheet = workbook.Sheets[sheetNames[0]]; 
-        const jsonData = XLSX.utils.sheet_to_json(sheet); 
+        const workbook = XLSX.readFile(filePath);
+        
+        const sheetName = workbook.SheetNames[0];
+        
+        const worksheet = workbook.Sheets[sheetName];
+        const data = XLSX.utils.sheet_to_json(worksheet);
+
+        if (!data || data.length === 0) {
+            throw new Error('No data found in the Excel file');
+        }
 
         const invoices = [];
         const products = [];
-        const customers = new Map(); 
+        const customers = new Map();
 
-        jsonData.forEach(row => {
+        data.forEach((row, index) => {
             const invoice = {
-                serialNumber: row['Serial Number'] || 'N/A',
-                customerName: row['Customer Name'] || 'N/A',
-                productName: row['Product Name'] || 'N/A',
-                quantity: row['Quantity'] || 0,
-                tax: row['Tax'] || 0,
-                totalAmount: row['Total Amount'] || 0,
-                date: row['Date'] || 'N/A'
+                serialNumber: row['Invoice Number'] || row['Serial Number'] || row['Serial_Number'] || `INV-${index + 1}`,
+                customerName: row['Customer Name'] || row['Customer_Name'] || 'N/A',
+                productName: row['Product Name'] || row['Product_Name'] || 'N/A',
+                quantity: Number(row['Quantity'] || row['qty'] || 0),
+                tax: Number(row['Tax'] || row['tax_amount'] || 0),
+                totalAmount: Number(row['Total Amount'] || row['Total_Amount'] || row['Total'] || 0),
+                date: row['Date'] || row['Invoice Date'] || row['Invoice_Date'] || 'N/A'
             };
-            invoices.push(invoice);
 
             const product = {
-                name: row['Product Name'] || 'N/A',
-                quantity: row['Quantity'] || 0,
-                unitPrice: row['Unit Price'] || 0,
-                tax: row['Tax'] || 0,
-                priceWithTax: row['Price with Tax'] || 0,
+                name: invoice.productName,
+                quantity: invoice.quantity,
+                unitPrice: Number(row['Unit Price'] || row['Unit_Price'] || 0),
+                tax: invoice.tax,
+                priceWithTax: invoice.totalAmount,
                 discount: row['Discount'] || 'N/A'
             };
+
+            const customer = {
+                name: invoice.customerName,
+                phoneNumber: row['Phone Number'] || row['Phone_Number'] || 'N/A',
+                totalPurchaseAmount: invoice.totalAmount
+            };
+
+            invoices.push(invoice);
             products.push(product);
 
-            // Aggregate customer data
-            const customerName = row['Customer Name'] || 'N/A';
-            const totalPurchaseAmount = row['Total Amount'] || 0;
-            if (customers.has(customerName)) {
-                customers.set(customerName, customers.get(customerName) + totalPurchaseAmount);
+            if (customers.has(customer.name)) {
+                const existingCustomer = customers.get(customer.name);
+                existingCustomer.totalPurchaseAmount += customer.totalPurchaseAmount;
             } else {
-                customers.set(customerName, totalPurchaseAmount);
+                customers.set(customer.name, customer);
             }
+
+            const finalCustomers = Array.from(customers.values()).map(c => ({
+                ...c,
+                totalPurchaseAmount: Number(c.totalPurchaseAmount)
+            }));
+
+            return { 
+                invoices, 
+                products, 
+                customers: finalCustomers 
+            };
         });
 
-        const customerArray = Array.from(customers.entries()).map(([name, totalPurchaseAmount]) => ({
-            name,
-            phoneNumber: 'N/A', 
-            totalPurchaseAmount
-        }));
-
-        return {
-            invoices,
-            products,
-            customers: customerArray
+        return { 
+            invoices, 
+            products, 
+            customers: Array.from(customers.values()) 
         };
     } catch (error) {
-        console.error('Excel data extraction error:', error);
-        throw new Error('Failed to extract data from Excel file.');
+        console.error('Excel Processing Error:', error);
+        return {
+            error: `Excel File Processing Failed: ${error.message}. 
+            Possible reasons:
+            - Incorrect file format
+            - Unexpected column names
+            - Empty or incorrectly formatted spreadsheet`,
+            details: error.toString()
+        };
     }
 }
+
 
 
 async function extractInvoiceDetails(text) {
